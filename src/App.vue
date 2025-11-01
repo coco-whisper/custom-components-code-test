@@ -751,8 +751,9 @@ try {
         const scriptContent = scriptMatch[1];
 
         // Extract the props object - look for props: { ... }
-        const propsMatch = scriptContent.match(/props:\s*\{([\s\S]*?)\}(?=\s*[,}])/);
-        if (!propsMatch) {
+        // Need to match nested braces correctly
+        const propsStart = scriptContent.indexOf('props:');
+        if (propsStart === -1) {
           return {
             $schema: "https://json-schema.org/draft/2020-12/schema",
             type: "object",
@@ -760,17 +761,79 @@ try {
           };
         }
 
-        const propsString = propsMatch[1];
+        // Find the opening brace after 'props:'
+        const afterProps = scriptContent.substring(propsStart + 6);
+        const firstBrace = afterProps.indexOf('{');
+        if (firstBrace === -1) {
+          return {
+            $schema: "https://json-schema.org/draft/2020-12/schema",
+            type: "object",
+            properties: {},
+          };
+        }
+
+        // Extract content between matching braces
+        let braceCount = 0;
+        let propsEndIndex = -1;
+        const startIndex = propsStart + 6 + firstBrace + 1;
+        
+        for (let i = propsStart + 6 + firstBrace; i < scriptContent.length; i++) {
+          if (scriptContent[i] === '{') {
+            braceCount++;
+          } else if (scriptContent[i] === '}') {
+            braceCount--;
+            if (braceCount === 0) {
+              propsEndIndex = i;
+              break;
+            }
+          }
+        }
+
+        if (propsEndIndex === -1) {
+          return {
+            $schema: "https://json-schema.org/draft/2020-12/schema",
+            type: "object",
+            properties: {},
+          };
+        }
+
+        const propsString = scriptContent.substring(startIndex, propsEndIndex);
         const properties = {};
 
-        // Extract individual prop definitions
-        // Match prop name followed by colon and object definition
-        const propRegex = /(\w+):\s*\{([\s\S]*?)\}(?=\s*[,}])/g;
+        // Extract individual prop definitions using a more robust approach
+        // Split by property names (identifiers followed by colon)
+        const propRegex = /(\w+):\s*\{/g;
         let propMatch;
 
+        const matches = [];
         while ((propMatch = propRegex.exec(propsString)) !== null) {
-          const propName = propMatch[1];
-          const propDef = propMatch[2];
+          matches.push({
+            name: propMatch[1],
+            startIndex: propMatch.index + propMatch[0].length - 1
+          });
+        }
+
+        // Extract each prop definition by finding matching braces
+        for (let i = 0; i < matches.length; i++) {
+          const propName = matches[i].name;
+          let braceCount = 0;
+          let propDefEnd = -1;
+          
+          for (let j = matches[i].startIndex; j < propsString.length; j++) {
+            if (propsString[j] === '{') {
+              braceCount++;
+            } else if (propsString[j] === '}') {
+              braceCount--;
+              if (braceCount === 0) {
+                propDefEnd = j;
+                break;
+              }
+            }
+          }
+
+          if (propDefEnd === -1) continue;
+
+          const propDef = propsString.substring(matches[i].startIndex + 1, propDefEnd);
           const propSchema = {};
 
           // Extract type
